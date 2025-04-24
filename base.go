@@ -5,11 +5,14 @@ import (
 	"github.com/any-call/gobase/util/mycrypto"
 	"github.com/any-call/gobase/util/mynet"
 	"github.com/any-call/gobase/util/myos"
+	"io/fs"
 	"net/http"
 	"os"
 	"path"
 	"path/filepath"
 	"runtime"
+	"strings"
+	"time"
 )
 
 type UpgradeStep int
@@ -48,7 +51,7 @@ func GetExecutablePath() (file string, err error) {
 	return exePath, nil
 }
 
-func ClearBackupAPP() {
+func ClearBackupAPP(t time.Duration) {
 	//首先删掉旧的升级back
 	execFile, err := GetExecutablePath()
 	if err != nil {
@@ -57,7 +60,10 @@ func ClearBackupAPP() {
 
 	removeFile := execFile + "_backup"
 	if myos.IsMac() {
-		_ = os.RemoveAll(removeFile)
+		if myos.IsExistDir(removeFile) {
+			time.Sleep(t)
+			_ = os.RemoveAll(removeFile)
+		}
 	} else if myos.IsWin() {
 		_ = os.Remove(removeFile)
 	}
@@ -94,7 +100,7 @@ func UpgradeApp(downloadUrl string, dlProcessCb func(percent float64, step Upgra
 		dlProcessCb(1.0, StepRename)
 	}
 	//将主程序自动命令为 _old.exe
-	execFile, newFile, err := renameSelf()
+	currExecPackage, _, err := renameSelf()
 	if err != nil {
 		return err
 	}
@@ -102,23 +108,75 @@ func UpgradeApp(downloadUrl string, dlProcessCb func(percent float64, step Upgra
 	if dlProcessCb != nil {
 		dlProcessCb(1.0, StepUnzip)
 	}
+
+	unzipFolder := filepath.Join(filepath.Dir(saveFile), fmt.Sprintf("%d", time.Now().UnixMilli())) //filepath.Dir(newFile)
+
+	defer func() {
+		//删除下载的文件 与 旧的文件
+		_ = os.Remove(saveFile)
+		_ = os.Remove(unzipFolder)
+	}()
+
 	//解压文件到当前目录
-	if err := mycrypto.Unzip(saveFile, filepath.Dir(newFile)); err != nil {
+	if err := mycrypto.Unzip(saveFile, unzipFolder); err != nil {
 		return err
+	}
+
+	//解压目录下的文件
+	var unzipBinFile string
+	filepath.Walk(unzipFolder, func(path string, info fs.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if myos.IsMac() {
+			// 只查找 .app 且是目录
+			if info.IsDir() && strings.HasSuffix(info.Name(), ".app") {
+				unzipBinFile = path
+				// 如果只想要顶层目录，不要递归深入 .app 内部
+				return nil
+			}
+		} else if myos.IsWin() {
+			if !info.IsDir() && strings.HasSuffix(info.Name(), ".exe") {
+				unzipBinFile = path
+				// 如果只想要顶层目录，不要递归深入 .app 内部
+				return nil
+			}
+		}
+
+		return nil
+	})
+
+	if unzipBinFile == "" {
+		return fmt.Errorf("not find bininary file")
+	}
+
+	if myos.IsMac() || myos.IsWin() { //将一个Mac 移到当前执行目录，
+		if err := os.Rename(unzipBinFile, currExecPackage); err != nil {
+			return err
+		}
+	} else {
+		return fmt.Errorf("unsupport platform")
 	}
 
 	if dlProcessCb != nil {
 		dlProcessCb(1.0, StepRemoveDownload)
 	}
-	//删除下载的文件
-	_ = os.Remove(saveFile)
 
 	if dlProcessCb != nil {
 		dlProcessCb(1.0, StepRestart)
 	}
-	////重新启动新的进程
-	if err := StartProcessDetached(execFile); err != nil {
+
+	execBinFile, err := os.Executable()
+	if err != nil {
 		return err
+	}
+
+	////重新启动新的进程
+	if err := StartProcessDetached(execBinFile); err != nil {
+		return err
+	} else {
+		os.Exit(1) //当成功启动后退出当前进程
 	}
 
 	return nil
@@ -150,6 +208,13 @@ func renameSelf() (oldFile, newFile string, err error) {
 		// 获取 .app 包路径
 		newAppBundlePath := execPath + "_backup"
 
+		//检测文件是否存在，
+		if myos.IsExistDir(newAppBundlePath) {
+			if err := os.RemoveAll(newAppBundlePath); err != nil {
+				return "", "", err
+			}
+		}
+
 		// 重命名 .app 包
 		err := os.Rename(execPath, newAppBundlePath)
 		if err != nil {
@@ -160,6 +225,14 @@ func renameSelf() (oldFile, newFile string, err error) {
 	} else if myos.IsWin() {
 		// 构建新的文件名
 		newPath := execPath + "_backup"
+
+		//检测文件是否存在，
+		if myos.IsExistFile(newPath) {
+			if err := os.Remove(newPath); err != nil {
+				return "", "", err
+			}
+		}
+
 		// 重命名当前应用程序
 		err = os.Rename(execPath, newPath)
 		if err != nil {
