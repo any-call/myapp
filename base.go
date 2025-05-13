@@ -64,7 +64,7 @@ func ClearBackupAPP(t time.Duration) {
 			time.Sleep(t)
 			_ = os.RemoveAll(removeFile)
 		}
-	} else if myos.IsWin() {
+	} else if myos.IsWin() || myos.IsAndroid() {
 		_ = os.Remove(removeFile)
 	}
 
@@ -139,7 +139,11 @@ func UpgradeApp(downloadUrl string, dlProcessCb func(percent float64, step Upgra
 		} else if myos.IsWin() {
 			if !info.IsDir() && strings.HasSuffix(info.Name(), ".exe") {
 				unzipBinFile = path
-				// 如果只想要顶层目录，不要递归深入 .app 内部
+				return nil
+			}
+		} else if myos.IsAndroid() {
+			if !info.IsDir() {
+				unzipBinFile = path
 				return nil
 			}
 		}
@@ -151,7 +155,7 @@ func UpgradeApp(downloadUrl string, dlProcessCb func(percent float64, step Upgra
 		return fmt.Errorf("not find bininary file")
 	}
 
-	if myos.IsMac() || myos.IsWin() { //将一个Mac 移到当前执行目录，
+	if myos.IsMac() || myos.IsWin() || myos.IsAndroid() { //将一个Mac 移到当前执行目录，
 		if err := os.Rename(unzipBinFile, currExecPackage); err != nil {
 			return err
 		}
@@ -222,7 +226,7 @@ func renameSelf() (oldFile, newFile string, err error) {
 		}
 
 		return execPath, newAppBundlePath, nil
-	} else if myos.IsWin() {
+	} else if myos.IsWin() || myos.IsAndroid() {
 		// 构建新的文件名
 		newPath := execPath + "_backup"
 
