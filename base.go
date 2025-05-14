@@ -176,6 +176,10 @@ func UpgradeApp(downloadUrl string, dlProcessCb func(percent float64, step Upgra
 		return err
 	}
 
+	if myos.IsAndroid() { //android 中 取到的执行路径是 改名后的
+		execBinFile = currExecPackage
+	}
+
 	////重新启动新的进程
 	if err := StartProcessDetached(execBinFile); err != nil {
 		return err

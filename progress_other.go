@@ -1,4 +1,5 @@
-//go:build linux || darwin
+//go:build linux || darwin || android
+// +build linux darwin android
 
 package myapp
 
