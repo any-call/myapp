@@ -5,6 +5,7 @@ import (
 	"github.com/any-call/gobase/util/mycrypto"
 	"github.com/any-call/gobase/util/mynet"
 	"github.com/any-call/gobase/util/myos"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
@@ -64,7 +65,7 @@ func ClearBackupAPP(t time.Duration) {
 			time.Sleep(t)
 			_ = os.RemoveAll(removeFile)
 		}
-	} else if myos.IsWin() || myos.IsAndroid() {
+	} else if myos.IsWin() || myos.IsAndroid() || myos.IsLinux() {
 		_ = os.Remove(removeFile)
 	}
 
@@ -99,6 +100,7 @@ func UpgradeApp(downloadUrl string, dlProcessCb func(percent float64, step Upgra
 	if dlProcessCb != nil {
 		dlProcessCb(1.0, StepRename)
 	}
+
 	//将主程序自动命令为 _old.exe
 	currExecPackage, _, err := renameSelf()
 	if err != nil {
@@ -141,7 +143,7 @@ func UpgradeApp(downloadUrl string, dlProcessCb func(percent float64, step Upgra
 				unzipBinFile = path
 				return nil
 			}
-		} else if myos.IsAndroid() {
+		} else if myos.IsAndroid() || myos.IsLinux() {
 			if !info.IsDir() {
 				unzipBinFile = path
 				return nil
@@ -157,6 +159,10 @@ func UpgradeApp(downloadUrl string, dlProcessCb func(percent float64, step Upgra
 
 	if myos.IsMac() || myos.IsWin() || myos.IsAndroid() { //将一个Mac 移到当前执行目录，
 		if err := os.Rename(unzipBinFile, currExecPackage); err != nil {
+			return err
+		}
+	} else if myos.IsLinux() {
+		if err := copyFile(unzipBinFile, currExecPackage); err != nil {
 			return err
 		}
 	} else {
@@ -176,7 +182,7 @@ func UpgradeApp(downloadUrl string, dlProcessCb func(percent float64, step Upgra
 		return err
 	}
 
-	if myos.IsAndroid() { //android 中 取到的执行路径是 改名后的
+	if myos.IsAndroid() || myos.IsLinux() { //android 中 取到的执行路径是 改名后的
 		execBinFile = currExecPackage
 	}
 
@@ -230,7 +236,7 @@ func renameSelf() (oldFile, newFile string, err error) {
 		}
 
 		return execPath, newAppBundlePath, nil
-	} else if myos.IsWin() || myos.IsAndroid() {
+	} else if myos.IsWin() || myos.IsAndroid() || myos.IsLinux() {
 		// 构建新的文件名
 		newPath := execPath + "_backup"
 
@@ -251,4 +257,42 @@ func renameSelf() (oldFile, newFile string, err error) {
 	}
 
 	return "", "", fmt.Errorf("rename fail")
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = in.Close()
+	}()
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		cerr := out.Close()
+		if err == nil {
+			err = cerr
+		}
+	}()
+
+	if _, err = io.Copy(out, in); err != nil {
+		return err
+	}
+
+	// 获取原文件的权限
+	fi, err := in.Stat()
+	if err != nil {
+		return err
+	}
+
+	// 设置目标文件权限，保留原权限（包括可执行）
+	if err = os.Chmod(dst, fi.Mode()); err != nil {
+		return err
+	}
+	// 删除源文件
+	return os.Remove(src)
 }
